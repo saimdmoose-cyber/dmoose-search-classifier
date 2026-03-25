@@ -203,10 +203,10 @@ function SortableTable({ rows, bucket }) {
     downloadFile(csv, `dmoose-${bucket}-terms.csv`);
   };
 
-  // Color the match % based on value
+  // Color the match % based on new thresholds
   const getMatchColor = (pct) => {
-    if (pct >= 70) return 'text-green-400';
-    if (pct >= 40) return 'text-yellow-400';
+    if (pct > 80) return 'text-green-400';
+    if (pct >= 51) return 'text-orange-400';
     return 'text-red-400';
   };
 
@@ -297,20 +297,24 @@ export default function ResultsScreen({ results, onReset }) {
 
   const relevant = useMemo(() => results.filter(r => r.bucket === 'relevant'), [results]);
   const wasting = useMemo(() => results.filter(r => r.bucket === 'wasting'), [results]);
+  const semi = useMemo(() => results.filter(r => r.bucket === 'semi'), [results]);
   const irrelevant = useMemo(() => results.filter(r => r.bucket === 'irrelevant'), [results]);
 
   const totalSpend = results.reduce((s, r) => s + (r.spend || 0), 0);
-  const wastedSpend = wasting.reduce((s, r) => s + (r.spend || 0), 0)
-    + irrelevant.reduce((s, r) => s + (r.spend || 0), 0);
   const relevantSpend = relevant.reduce((s, r) => s + (r.spend || 0), 0);
+  const wastingSpend = wasting.reduce((s, r) => s + (r.spend || 0), 0);
+  const semiSpend = semi.reduce((s, r) => s + (r.spend || 0), 0);
+  const irrelevantSpend = irrelevant.reduce((s, r) => s + (r.spend || 0), 0);
+  const wastedSpend = wastingSpend + irrelevantSpend;
 
   const tabs = [
-    { id: 'relevant', label: 'Relevant + Converting', icon: '✅', count: relevant.length, color: 'text-green-400' },
+    { id: 'relevant', label: 'Relevant', icon: '✅', count: relevant.length, color: 'text-green-400' },
     { id: 'wasting', label: 'Wasting', icon: '⚠️', count: wasting.length, color: 'text-yellow-400' },
+    { id: 'semi', label: 'Semi-Relevant', icon: '◆', count: semi.length, color: 'text-orange-400' },
     { id: 'irrelevant', label: 'Irrelevant', icon: '❌', count: irrelevant.length, color: 'text-red-400' },
   ];
 
-  const tabData = { relevant, wasting, irrelevant };
+  const tabData = { relevant, wasting, semi, irrelevant };
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
@@ -321,7 +325,7 @@ export default function ResultsScreen({ results, onReset }) {
             <span className="text-dm-crimson">Results</span> Dashboard
           </h1>
           <p className="text-xs text-dm-gray mt-1">
-            Relevancy threshold: 70% keyword match | 3 buckets
+            Thresholds: &gt;80% = Relevant | 51-80% = Semi-Relevant | ≤50% = Irrelevant | 4 buckets
           </p>
         </div>
         <button
@@ -333,13 +337,14 @@ export default function ResultsScreen({ results, onReset }) {
       </div>
 
       {/* Summary Bar */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
           { label: 'Total Terms', value: results.length, color: 'text-white' },
           { label: 'Total Ad Spend', value: `$${totalSpend.toFixed(2)}`, color: 'text-white' },
           { label: 'Relevant Spend', value: `$${relevantSpend.toFixed(2)}`, color: 'text-green-400' },
           { label: 'Wasted Spend', value: `$${wastedSpend.toFixed(2)}`, color: 'text-yellow-500' },
-          { label: 'Irrelevant Terms', value: irrelevant.length, color: 'text-red-500' },
+          { label: 'Semi-Relevant', value: semi.length, color: 'text-orange-400' },
+          { label: 'Irrelevant', value: irrelevant.length, color: 'text-red-500' },
           { label: 'Rec. Negatives', value: irrelevant.length, color: 'text-dm-crimson' },
         ].map((stat, i) => (
           <div key={i} className="bg-dm-charcoal border border-dm-dark-gray p-4">
@@ -371,9 +376,10 @@ export default function ResultsScreen({ results, onReset }) {
 
       {/* Tab Description */}
       <div className="text-xs text-dm-gray/60 px-1">
-        {activeTab === 'relevant' && '✅ Search terms with >=70% keyword match AND at least 1 order with acceptable ACOS'}
-        {activeTab === 'wasting' && '⚠️ Search terms with >=70% keyword match BUT zero orders or ACOS above threshold - optimize bids or pause'}
-        {activeTab === 'irrelevant' && '❌ Search terms with <70% keyword match - not related to your product, safe to add as negative keywords'}
+        {activeTab === 'relevant' && '✅ Search terms with >80% keyword match AND at least 1 order with acceptable ACOS — your best performers'}
+        {activeTab === 'wasting' && '⚠️ Search terms with >80% match BUT zero orders or ACOS above threshold — optimize bids or pause'}
+        {activeTab === 'semi' && '◆ Search terms with 51-80% keyword match — partially related, review manually before negating'}
+        {activeTab === 'irrelevant' && '❌ Search terms with ≤50% keyword match OR zero orders + very high ACOS — safe to add as negative keywords'}
       </div>
 
       {/* Table */}

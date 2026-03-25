@@ -52,9 +52,10 @@ export default function App() {
 
       const relevant = classified.filter(r => r.bucket === 'relevant').length;
       const wasting = classified.filter(r => r.bucket === 'wasting').length;
+      const semi = classified.filter(r => r.bucket === 'semi').length;
       const irrelevant = classified.filter(r => r.bucket === 'irrelevant').length;
 
-      addLog(`Done: ${relevant} relevant, ${wasting} wasting, ${irrelevant} irrelevant`);
+      addLog(`Done: ${relevant} relevant, ${wasting} wasting, ${semi} semi-relevant, ${irrelevant} irrelevant`);
 
       setResults(classified);
       setScreen('results');

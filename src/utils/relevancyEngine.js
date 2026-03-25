@@ -61,9 +61,11 @@ function keywordMatch(searchTerm, keywords) {
  * Checks how many product-related words appear in the search term.
  * Returns a relevance score 0-1 (0% to 100%).
  *
- * CLASSIFICATION THRESHOLDS:
- *   >= 70% match  => RELEVANT (goes to Relevant or Wasting depending on orders)
- *   <  70% match  => IRRELEVANT (negative candidate)
+ * CLASSIFICATION THRESHOLDS (4 buckets):
+ *   > 80% match   => RELEVANT (converting if has orders, wasting if not)
+ *   51-80% match  => SEMI-RELEVANT (needs review)
+ *   <= 50% match  => IRRELEVANT (negative candidate)
+ *   0 orders OR very high ACOS => pushed toward IRRELEVANT
  */
 function fuzzyProductMatch(searchTerm, productWords) {
   const termWords = searchTerm.toLowerCase().split(/\s+/).filter(w => w.length > 2);
@@ -102,17 +104,18 @@ function acosFilter(row, threshold) {
  * Main classification engine.
  * Applies all 4 layers in order and returns classified results.
  *
- * NEW CLASSIFICATION LOGIC (3 buckets only):
+ * CLASSIFICATION LOGIC (4 buckets):
  *
- *   relevant   - keyword match (exact or >=70% fuzzy) AND has orders (ACOS OK)
- *                OR has orders with high ACOS but still relevant
- *   wasting    - keyword match (exact or >=70% fuzzy) BUT zero orders
- *                OR relevant with orders but ACOS exceeded threshold
- *   irrelevant - <70% fuzzy match = no meaningful relation (negative candidates)
+ *   relevant      - exact keyword match OR >80% fuzzy match, AND has orders, AND ACOS OK
+ *   wasting       - relevant match (>80%) BUT zero orders OR ACOS exceeded
+ *   semi-relevant - 51-80% fuzzy match (needs manual review)
+ *   irrelevant    - <=50% fuzzy match = no meaningful relation (negative candidates)
+ *                   ALSO: 0 orders with very high ACOS (>2x threshold) get pushed to irrelevant
  *
- * RELEVANCY THRESHOLD: 70%
- *   >= 70% word match from product keywords  =>  considered RELEVANT
- *   <  70% word match                        =>  considered IRRELEVANT
+ * THRESHOLDS:
+ *   > 80%  => RELEVANT tier
+ *   51-80% => SEMI-RELEVANT tier
+ *   <= 50% => IRRELEVANT tier
  */
 export async function classifySearchTerms({
   rows,
@@ -126,7 +129,9 @@ export async function classifySearchTerms({
   const productWords = extractProductWords(productInfo);
   const results = [];
 
-  const RELEVANCY_THRESHOLD = 0.70; // 70% match = relevant
+  const HIGH_THRESHOLD = 0.80;   // >80% = relevant
+  const SEMI_THRESHOLD = 0.51;   // 51-80% = semi-relevant
+  // <=50% = irrelevant
 
   // === LAYER 1: Keyword Match ===
   if (onLayerUpdate) onLayerUpdate('Layer 1: Keyword Match - scanning target keywords...');
@@ -191,59 +196,82 @@ export async function classifySearchTerms({
     const hasOrders = row.orders > 0;
     const matchPct = Math.round(row.fuzzyScore * 100);
 
-    // Determine relevancy: exact keyword match OR AI says relevant OR >= 70% fuzzy match
     const isExactMatch = row.keywordRelevant;
-    const isHighFuzzy = row.fuzzyScore >= RELEVANCY_THRESHOLD;
-    const isRelevant = isExactMatch || isAiRelevant || isHighFuzzy;
+    const isHighFuzzy = row.fuzzyScore > HIGH_THRESHOLD;    // >80%
+    const isSemiFuzzy = row.fuzzyScore >= SEMI_THRESHOLD && row.fuzzyScore <= HIGH_THRESHOLD; // 51-80%
+    const isLowFuzzy = row.fuzzyScore < SEMI_THRESHOLD;     // <=50%
+
+    // Very high ACOS = more than 2x the threshold (e.g., >80% when threshold is 40%)
+    const isVeryHighAcos = row.acos > 0 && row.acos > (acosThreshold * 2);
 
     // Build match info string for reasons
     const matchedWordsStr = row.fuzzyWords.length > 0
       ? `"${row.fuzzyWords.join('", "')}"`
       : '';
 
-    if (isRelevant && hasOrders && !row.acosExceeded) {
-      // ✅ RELEVANT + CONVERTING: relevant + has orders + ACOS OK
+    // --- IRRELEVANT: <=50% match OR (0 orders + very high ACOS) ---
+    if (isLowFuzzy && !isExactMatch && !isAiRelevant) {
+      bucket = 'irrelevant';
+      if (aiReason && !aiReason.includes('skipped') && !aiReason.includes('error')) {
+        reason = `AI: ${aiReason}`;
+      } else if (row.fuzzyWords.length > 0) {
+        reason = `Low match: ${matchedWordsStr} (${matchPct}%) | <=50% — negative candidate`;
+      } else {
+        reason = 'No keyword match (0%) — negative candidate';
+      }
+
+    } else if (!hasOrders && isVeryHighAcos) {
+      // Zero orders + very high ACOS → irrelevant regardless of match
+      bucket = 'irrelevant';
+      reason = `Zero orders + ACOS ${row.acos.toFixed(1)}% (>${acosThreshold * 2}%) — wasteful, negative candidate`;
+
+    // --- SEMI-RELEVANT: 51-80% match ---
+    } else if (isSemiFuzzy && !isExactMatch && !isAiRelevant) {
+      bucket = 'semi';
+      if (hasOrders && !row.acosExceeded) {
+        reason = `Partial match: ${matchedWordsStr} (${matchPct}%) | Orders: ${row.orders} — review manually`;
+      } else if (hasOrders && row.acosExceeded) {
+        reason = `Partial match: ${matchedWordsStr} (${matchPct}%) | ACOS ${row.acos.toFixed(1)}% > ${acosThreshold}% — review manually`;
+      } else {
+        reason = `Partial match: ${matchedWordsStr} (${matchPct}%) | Zero orders — review manually`;
+      }
+
+    // --- RELEVANT + CONVERTING: >80% or exact match, has orders, ACOS OK ---
+    } else if ((isExactMatch || isHighFuzzy || isAiRelevant) && hasOrders && !row.acosExceeded) {
       bucket = 'relevant';
       if (isExactMatch) {
         reason = `Keyword match: "${row.matchedKeyword}" | Orders: ${row.orders}`;
       } else if (isAiRelevant) {
         reason = `AI: ${aiReason} | Orders: ${row.orders}`;
       } else {
-        reason = `Partial match: ${matchedWordsStr} (${matchPct}%) | Orders: ${row.orders}`;
+        reason = `High match: ${matchedWordsStr} (${matchPct}%) | Orders: ${row.orders}`;
       }
 
-    } else if (isRelevant && hasOrders && row.acosExceeded) {
-      // ⚠️ WASTING: relevant + has orders but ACOS too high
+    // --- WASTING: >80% or exact match, but zero orders or high ACOS ---
+    } else if ((isExactMatch || isHighFuzzy || isAiRelevant) && hasOrders && row.acosExceeded) {
       bucket = 'wasting';
       if (isExactMatch) {
-        reason = `Keyword: "${row.matchedKeyword}" | ACOS ${row.acos.toFixed(1)}% > ${acosThreshold}% | Orders: ${row.orders}`;
+        reason = `Keyword: "${row.matchedKeyword}" | ACOS ${row.acos.toFixed(1)}% > ${acosThreshold}% — optimize bid`;
       } else if (isAiRelevant) {
         reason = `AI: ${aiReason} | ACOS ${row.acos.toFixed(1)}% > ${acosThreshold}%`;
       } else {
-        reason = `Partial match: ${matchedWordsStr} (${matchPct}%) | ACOS ${row.acos.toFixed(1)}% > ${acosThreshold}%`;
+        reason = `High match: ${matchedWordsStr} (${matchPct}%) | ACOS ${row.acos.toFixed(1)}% > ${acosThreshold}%`;
       }
 
-    } else if (isRelevant && !hasOrders) {
-      // ⚠️ WASTING: relevant (>=70% or exact keyword) but ZERO orders
+    } else if ((isExactMatch || isHighFuzzy || isAiRelevant) && !hasOrders) {
       bucket = 'wasting';
       if (isExactMatch) {
-        reason = `Keyword: "${row.matchedKeyword}" | Zero orders - review manually`;
+        reason = `Keyword: "${row.matchedKeyword}" | Zero orders — review bid/listing`;
       } else if (isAiRelevant) {
-        reason = `AI: ${aiReason} | Zero orders - review manually`;
+        reason = `AI: ${aiReason} | Zero orders — review bid/listing`;
       } else {
-        reason = `Partial match: ${matchedWordsStr} (${matchPct}%) | Zero orders - review manually`;
+        reason = `High match: ${matchedWordsStr} (${matchPct}%) | Zero orders — review bid/listing`;
       }
 
     } else {
-      // ❌ IRRELEVANT: <70% match = not related to product (negative candidate)
+      // Fallback — shouldn't hit this but just in case
       bucket = 'irrelevant';
-      if (aiReason && !aiReason.includes('skipped') && !aiReason.includes('error')) {
-        reason = `AI: ${aiReason}`;
-      } else if (row.fuzzyWords.length > 0) {
-        reason = `Low match: ${matchedWordsStr} (${matchPct}%) | Below 70% threshold - negative candidate`;
-      } else {
-        reason = 'No keyword match (0%) - negative candidate';
-      }
+      reason = `Unclassified (${matchPct}%) — review manually`;
     }
 
     results.push({
