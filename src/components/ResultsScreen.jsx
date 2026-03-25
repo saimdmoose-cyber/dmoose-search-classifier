@@ -120,10 +120,7 @@ function NegativeExportPanel({ rows }) {
 }
 
 /* ─── Advanced Filter Bar ─── */
-function FilterBar({ filters, setFilters, rows }) {
-  const maxSpend = useMemo(() => Math.max(...rows.map(r => r.spend || 0), 0), [rows]);
-  const maxClicks = useMemo(() => Math.max(...rows.map(r => r.clicks || 0), 0), [rows]);
-
+function FilterBar({ filters, setFilters }) {
   return (
     <div className="bg-dm-black border border-dm-dark-gray p-3 mb-4 space-y-2">
       <div className="flex items-center justify-between">
@@ -378,7 +375,7 @@ function SortableTable({ rows, bucket }) {
         </div>
       </div>
 
-      {showFilters && <FilterBar filters={filters} setFilters={setFilters} rows={rows} />}
+      {showFilters && <FilterBar filters={filters} setFilters={setFilters} />}
 
       {/* Quick filter chips */}
       <div className="flex flex-wrap gap-2 mb-3">
