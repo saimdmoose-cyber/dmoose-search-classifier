@@ -57,9 +57,13 @@ function keywordMatch(searchTerm, keywords) {
 }
 
 /**
- * Layer 1b: Fuzzy/Partial Keyword Match (SEMI-RELEVANT detection)
+ * Layer 1b: Fuzzy/Partial Keyword Match
  * Checks how many product-related words appear in the search term.
- * Returns a relevance score 0-1.
+ * Returns a relevance score 0-1 (0% to 100%).
+ *
+ * CLASSIFICATION THRESHOLDS:
+ *   >= 70% match  => RELEVANT (goes to Relevant or Wasting depending on orders)
+ *   <  70% match  => IRRELEVANT (negative candidate)
  */
 function fuzzyProductMatch(searchTerm, productWords) {
   const termWords = searchTerm.toLowerCase().split(/\s+/).filter(w => w.length > 2);
@@ -98,11 +102,17 @@ function acosFilter(row, threshold) {
  * Main classification engine.
  * Applies all 4 layers in order and returns classified results.
  *
- * BUCKETS:
- *   relevant   — keyword match + has orders + ACOS OK
- *   wasting    — relevant but zero orders or high ACOS
- *   semi       — partially related (fuzzy match or AI semi-relevant), zero orders
- *   irrelevant — no relation at all, zero orders (negative candidates)
+ * NEW CLASSIFICATION LOGIC (3 buckets only):
+ *
+ *   relevant   - keyword match (exact or >=70% fuzzy) AND has orders (ACOS OK)
+ *                OR has orders with high ACOS but still relevant
+ *   wasting    - keyword match (exact or >=70% fuzzy) BUT zero orders
+ *                OR relevant with orders but ACOS exceeded threshold
+ *   irrelevant - <70% fuzzy match = no meaningful relation (negative candidates)
+ *
+ * RELEVANCY THRESHOLD: 70%
+ *   >= 70% word match from product keywords  =>  considered RELEVANT
+ *   <  70% word match                        =>  considered IRRELEVANT
  */
 export async function classifySearchTerms({
   rows,
@@ -116,8 +126,10 @@ export async function classifySearchTerms({
   const productWords = extractProductWords(productInfo);
   const results = [];
 
+  const RELEVANCY_THRESHOLD = 0.70; // 70% match = relevant
+
   // === LAYER 1: Keyword Match ===
-  if (onLayerUpdate) onLayerUpdate('Layer 1: Keyword Match — scanning target keywords...');
+  if (onLayerUpdate) onLayerUpdate('Layer 1: Keyword Match - scanning target keywords...');
 
   const keywordResults = rows.map(row => {
     const match = keywordMatch(row.searchTerm, keywords);
@@ -132,7 +144,7 @@ export async function classifySearchTerms({
   });
 
   // === LAYER 2: Zero Sales Filter ===
-  if (onLayerUpdate) onLayerUpdate('Layer 2: Zero Sales Filter — flagging zero-order terms...');
+  if (onLayerUpdate) onLayerUpdate('Layer 2: Zero Sales Filter - flagging zero-order terms...');
 
   const zeroSalesResults = keywordResults.map(row => ({
     ...row,
@@ -140,7 +152,7 @@ export async function classifySearchTerms({
   }));
 
   // === LAYER 3: ACOS Filter ===
-  if (onLayerUpdate) onLayerUpdate('Layer 3: ACOS Filter — checking ACOS thresholds...');
+  if (onLayerUpdate) onLayerUpdate('Layer 3: ACOS Filter - checking ACOS thresholds...');
 
   const acosResults = zeroSalesResults.map(row => ({
     ...row,
@@ -150,9 +162,9 @@ export async function classifySearchTerms({
   // === LAYER 4: AI Classification ===
   const apiAvailable = hasApiKey();
   if (apiAvailable) {
-    if (onLayerUpdate) onLayerUpdate('Layer 4: AI Classification — sending to Claude API...');
+    if (onLayerUpdate) onLayerUpdate('Layer 4: AI Classification - sending to Claude API...');
   } else {
-    if (onLayerUpdate) onLayerUpdate('Layer 4: AI Classification — skipped (no API key). Using fuzzy matching for semi-relevant detection.');
+    if (onLayerUpdate) onLayerUpdate('Layer 4: AI Classification - skipped (no API key). Using fuzzy matching.');
   }
 
   // Only send terms that weren't matched by keywords to Claude for classification
@@ -176,67 +188,62 @@ export async function classifySearchTerms({
     const aiResult = aiResults.get(row.searchTerm);
     const isAiRelevant = aiResult?.aiRelevant ?? false;
     const aiReason = aiResult?.aiReason ?? '';
-    const isRelevant = row.keywordRelevant || isAiRelevant;
     const hasOrders = row.orders > 0;
+    const matchPct = Math.round(row.fuzzyScore * 100);
 
-    // Semi-relevant: fuzzy score >= 0.3 means at least some product words match
-    const isSemiRelevant = !isRelevant && row.fuzzyScore >= 0.3;
+    // Determine relevancy: exact keyword match OR AI says relevant OR >= 70% fuzzy match
+    const isExactMatch = row.keywordRelevant;
+    const isHighFuzzy = row.fuzzyScore >= RELEVANCY_THRESHOLD;
+    const isRelevant = isExactMatch || isAiRelevant || isHighFuzzy;
 
-    if (hasOrders && !row.acosExceeded) {
-      // HAS ORDERS + ACOS OK → RELEVANT + CONVERTING
+    // Build match info string for reasons
+    const matchedWordsStr = row.fuzzyWords.length > 0
+      ? `"${row.fuzzyWords.join('", "')}"`
+      : '';
+
+    if (isRelevant && hasOrders && !row.acosExceeded) {
+      // ✅ RELEVANT + CONVERTING: relevant + has orders + ACOS OK
       bucket = 'relevant';
-      if (row.keywordRelevant) {
+      if (isExactMatch) {
         reason = `Keyword match: "${row.matchedKeyword}" | Orders: ${row.orders}`;
       } else if (isAiRelevant) {
         reason = `AI: ${aiReason} | Orders: ${row.orders}`;
       } else {
-        reason = `Converting (${row.orders} orders) — kept as relevant`;
+        reason = `Partial match: ${matchedWordsStr} (${matchPct}%) | Orders: ${row.orders}`;
       }
-    } else if (hasOrders && row.acosExceeded) {
-      // HAS ORDERS BUT HIGH ACOS → WASTING
+
+    } else if (isRelevant && hasOrders && row.acosExceeded) {
+      // ⚠️ WASTING: relevant + has orders but ACOS too high
       bucket = 'wasting';
-      const reasons = [];
-      if (row.keywordRelevant) reasons.push(`Keyword: "${row.matchedKeyword}"`);
-      else if (isAiRelevant) reasons.push(`AI: ${aiReason}`);
-      else reasons.push(`Converting (${row.orders} orders)`);
-      reasons.push(`ACOS ${row.acos.toFixed(1)}% > ${acosThreshold}%`);
-      reason = reasons.join(' | ');
-    } else if (isRelevant && row.hasZeroSales) {
-      // RELEVANT BY KEYWORD/AI BUT ZERO ORDERS → WASTING
+      if (isExactMatch) {
+        reason = `Keyword: "${row.matchedKeyword}" | ACOS ${row.acos.toFixed(1)}% > ${acosThreshold}% | Orders: ${row.orders}`;
+      } else if (isAiRelevant) {
+        reason = `AI: ${aiReason} | ACOS ${row.acos.toFixed(1)}% > ${acosThreshold}%`;
+      } else {
+        reason = `Partial match: ${matchedWordsStr} (${matchPct}%) | ACOS ${row.acos.toFixed(1)}% > ${acosThreshold}%`;
+      }
+
+    } else if (isRelevant && !hasOrders) {
+      // ⚠️ WASTING: relevant (>=70% or exact keyword) but ZERO orders
       bucket = 'wasting';
-      const reasons = [];
-      if (row.keywordRelevant) reasons.push(`Keyword: "${row.matchedKeyword}"`);
-      else reasons.push(`AI: ${aiReason}`);
-      if (row.spend >= spendThreshold) reasons.push(`Zero orders, $${row.spend.toFixed(2)} spent`);
-      else reasons.push('Zero orders');
-      reason = reasons.join(' | ');
-    } else if (isSemiRelevant && row.hasZeroSales) {
-      // PARTIALLY RELATED + ZERO ORDERS → SEMI-RELEVANT
-      bucket = 'semi';
-      const matchInfo = row.fuzzyWords.length > 0
-        ? `Partial match: "${row.fuzzyWords.join('", "')}" (${Math.round(row.fuzzyScore * 100)}%)`
-        : `Fuzzy score: ${Math.round(row.fuzzyScore * 100)}%`;
-      reason = aiReason && !aiReason.includes('skipped') && !aiReason.includes('error')
-        ? `AI: ${aiReason} | ${matchInfo}`
-        : `${matchInfo} | Zero orders — review manually`;
-    } else if (!isRelevant && row.hasZeroSales) {
-      // NOT RELEVANT + ZERO ORDERS → IRRELEVANT (negative candidate)
-      bucket = 'irrelevant';
-      reason = aiReason && !aiReason.includes('skipped') && !aiReason.includes('error')
-        ? `AI: ${aiReason}`
-        : 'No keyword match, zero orders — negative candidate';
-    } else if (isRelevant) {
-      // RELEVANT (catch-all for edge cases)
-      bucket = 'relevant';
-      reason = row.keywordRelevant
-        ? `Keyword match: "${row.matchedKeyword}"`
-        : `AI: ${aiReason}`;
+      if (isExactMatch) {
+        reason = `Keyword: "${row.matchedKeyword}" | Zero orders - review manually`;
+      } else if (isAiRelevant) {
+        reason = `AI: ${aiReason} | Zero orders - review manually`;
+      } else {
+        reason = `Partial match: ${matchedWordsStr} (${matchPct}%) | Zero orders - review manually`;
+      }
+
     } else {
-      // Fallback
+      // ❌ IRRELEVANT: <70% match = not related to product (negative candidate)
       bucket = 'irrelevant';
-      reason = aiReason && !aiReason.includes('skipped') && !aiReason.includes('error')
-        ? `AI: ${aiReason}`
-        : 'No keyword match — negative candidate';
+      if (aiReason && !aiReason.includes('skipped') && !aiReason.includes('error')) {
+        reason = `AI: ${aiReason}`;
+      } else if (row.fuzzyWords.length > 0) {
+        reason = `Low match: ${matchedWordsStr} (${matchPct}%) | Below 70% threshold - negative candidate`;
+      } else {
+        reason = 'No keyword match (0%) - negative candidate';
+      }
     }
 
     results.push({
@@ -245,6 +252,7 @@ export async function classifySearchTerms({
       reason,
       aiRelevant: isAiRelevant,
       aiReason,
+      matchPct,
     });
   }
 

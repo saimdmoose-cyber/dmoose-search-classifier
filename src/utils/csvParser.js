@@ -23,7 +23,7 @@ const COLUMN_MAP_LOWER = {
   'spend': 'spend',
   'cost': 'spend',
   'total spend': 'spend',
-  'total cost': 'spend',                     // Campaign-level "Total cost (USD)"
+  'total cost': 'spend',
   'total cost (usd)': 'spend',
   'amount spent': 'spend',
   // Sales
@@ -33,7 +33,7 @@ const COLUMN_MAP_LOWER = {
   'sales': 'sales',
   'total sales': 'sales',
   '7 day total sales(?)': 'sales',
-  'sales (usd)': 'sales',                    // Campaign-level "Sales (USD)"
+  'sales (usd)': 'sales',
   // Orders / Purchases
   '7 day total orders (#)': 'orders',
   '7 day total orders': 'orders',
@@ -41,7 +41,7 @@ const COLUMN_MAP_LOWER = {
   '14 day total orders': 'orders',
   'orders': 'orders',
   'total orders': 'orders',
-  'purchases': 'orders',                     // Campaign-level "Purchases"
+  'purchases': 'orders',
   // Units
   '7 day total units (#)': 'units',
   '7 day total units': 'units',
@@ -51,28 +51,43 @@ const COLUMN_MAP_LOWER = {
   'total advertising cost of sales (acos)': 'acos',
   'total advertising cost of sales(acos)': 'acos',
   'acos': 'acos',
-  'roas': 'roas',                            // Campaign-level ROAS
-  // Campaign / Ad Group
+  'roas': 'roas',
+  // Campaign / Ad Group NAMES
   'campaign name': 'campaign',
-  'campaign': 'campaign',
+  'campaign name (informational only)': 'campaign',
   'ad group name': 'adGroup',
-  'ad group': 'adGroup',
+  'ad group name (informational only)': 'adGroup',
+  // Campaign / Ad Group IDs (from bulk file)
+  'campaign id': 'campaignId',
+  'ad group id': 'adGroupId',
+  // Keyword / Targeting IDs
+  'keyword id': 'keywordId',
+  'keyword text': 'keywordText',
+  'product targeting id': 'productTargetingId',
+  'product targeting expression': 'productTargeting',
   // Targeting / Match Type / Product Targets
   'targeting': 'targeting',
   'match type': 'matchType',
   'keyword': 'keyword',
-  'product targets': 'targeting',            // Campaign-level "Product targets"
-  'added as': 'addedAs',                     // Campaign-level "Added as"
+  'product targets': 'targeting',
+  'added as': 'addedAs',
   // CTR / CPC
   'click-thru rate (ctr)': 'ctr',
+  'click-through rate': 'ctr',
   'ctr': 'ctr',
   'cost per click (cpc)': 'cpc',
   'cpc': 'cpc',
-  'cpc (usd)': 'cpc',                        // Campaign-level "CPC (USD)"
-  // Purchase rate / CVR
-  'purchase rate': 'purchaseRate',            // Campaign-level
-  // Target bid
-  'target bid (usd)': 'targetBid',           // Campaign-level
+  'cpc (usd)': 'cpc',
+  // Purchase rate / CVR / Conversions
+  'purchase rate': 'purchaseRate',
+  'conversions': 'conversions',
+  // Target bid / Campaign bid
+  'target bid (usd)': 'targetBid',
+  'campaign bid': 'campaignBid',
+  'bid': 'bid',
+  // Portfolio / State
+  'portfolio name': 'portfolioName',
+  'state': 'state',
 };
 
 function cleanCurrency(val) {
@@ -90,7 +105,6 @@ function cleanCurrency(val) {
 function normalizeHeaders(headers) {
   const mapping = {};
   for (const header of headers) {
-    // Strip BOM, quotes, leading/trailing whitespace
     const cleaned = String(header).replace(/^\uFEFF/, '').replace(/^["']+|["']+$/g, '').trim();
     const lower = cleaned.toLowerCase();
 
@@ -134,7 +148,6 @@ function findHeaderRow(text) {
 
 /**
  * Load SheetJS (xlsx) library dynamically from CDN.
- * This avoids needing npm install for xlsx support.
  */
 let xlsxLib = null;
 async function loadXLSX() {
@@ -157,8 +170,9 @@ async function loadXLSX() {
 }
 
 /**
- * Parse an XLSX file into an array of row objects (like CSV rows).
- * Finds the header row automatically within the first 10 rows.
+ * Parse an XLSX file into an array of row objects.
+ * For Amazon BULK files (multi-sheet), finds the "SP Search Term Report" sheet.
+ * For single-sheet files, uses the first sheet.
  */
 async function parseXLSXFile(file) {
   const XLSX = await loadXLSX();
@@ -170,24 +184,48 @@ async function parseXLSXFile(file) {
         const data = new Uint8Array(e.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
 
-        // Use first sheet
-        const sheetName = workbook.SheetNames[0];
-        const sheet = workbook.Sheets[sheetName];
+        console.log('XLSX sheets found:', workbook.SheetNames);
 
-        if (!sheet) {
+        // For Amazon bulk files: prefer "SP Search Term Report" sheet
+        const searchTermSheetNames = [
+          'SP Search Term Report',
+          'Search Term Report',
+          'Sponsored Products Search Term',
+        ];
+
+        let targetSheet = null;
+        let targetSheetName = '';
+
+        for (const name of searchTermSheetNames) {
+          if (workbook.SheetNames.includes(name)) {
+            targetSheet = workbook.Sheets[name];
+            targetSheetName = name;
+            break;
+          }
+        }
+
+        // If no search term sheet found, use first sheet
+        if (!targetSheet) {
+          targetSheetName = workbook.SheetNames[0];
+          targetSheet = workbook.Sheets[targetSheetName];
+        }
+
+        console.log(`Using sheet: "${targetSheetName}"`);
+
+        if (!targetSheet) {
           reject(new Error('No sheets found in the Excel file.'));
           return;
         }
 
         // Get raw data as array of arrays
-        const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+        const rawData = XLSX.utils.sheet_to_json(targetSheet, { header: 1, defval: '' });
 
         if (rawData.length === 0) {
           reject(new Error('Excel sheet is empty.'));
           return;
         }
 
-        // Find the header row (search for row containing search term column)
+        // Find the header row
         const searchTermIndicators = ['customer search term', 'search term', 'search query', 'query', 'matched product'];
         const otherIndicators = ['impressions', 'clicks', 'spend', 'cost', 'orders', 'sales', 'purchases', 'total cost'];
         let headerRowIndex = -1;
@@ -207,7 +245,6 @@ async function parseXLSXFile(file) {
         }
 
         if (headerRowIndex === -1) {
-          // Fallback: assume first row is headers
           headerRowIndex = 0;
         }
 
@@ -255,7 +292,6 @@ function processRows(headers, rawRows) {
   }
 
   // Detect if ACOS values are decimals (0.2683) vs percentages (26.83)
-  // by checking if the report has ACOS values all < 1 (decimal format)
   const hasAcos = Object.values(headerMap).includes('acos');
   let acosIsDecimal = false;
   if (hasAcos) {
@@ -265,16 +301,11 @@ function processRows(headers, rawRows) {
         return parseFloat(String(row[acosKey] || '0').replace(/[$,%\s"']/g, ''));
       })
       .filter(v => v > 0);
-    // If all non-zero ACOS values are < 2, they're decimals (e.g., 0.2683 = 26.83%)
     if (sampleAcos.length > 0 && sampleAcos.every(v => v < 2)) {
       acosIsDecimal = true;
-      console.log('Detected ACOS values in decimal format (e.g., 0.27 = 27%), converting to percentage');
+      console.log('Detected ACOS values in decimal format, converting to percentage');
     }
   }
-
-  // Also detect if CTR / Purchase Rate are decimals
-  const hasCtr = Object.values(headerMap).includes('ctr');
-  const hasPurchaseRate = Object.values(headerMap).includes('purchaseRate');
 
   const rows = rawRows
     .map((row, index) => {
@@ -299,27 +330,27 @@ function processRows(headers, rawRows) {
       sales: cleanCurrency(row.sales),
       orders: cleanCurrency(row.orders),
       acos: cleanCurrency(row.acos),
+      // Preserve IDs as strings (don't clean as currency!)
+      campaignId: row.campaignId ? String(row.campaignId).trim() : '',
+      adGroupId: row.adGroupId ? String(row.adGroupId).trim() : '',
       campaign: row.campaign ? String(row.campaign).trim() : '',
       adGroup: row.adGroup ? String(row.adGroup).trim() : '',
-      matchType: row.matchType ? String(row.matchType).trim() : 'Negative exact',
+      matchType: row.matchType ? String(row.matchType).trim() : '',
+      portfolioName: row.portfolioName ? String(row.portfolioName).trim() : '',
     }));
 
   // Compute / normalize ACOS and CVR
   for (const row of rows) {
-    // Convert decimal ACOS to percentage (0.2683 → 26.83)
     if (acosIsDecimal && row.acos > 0) {
       row.acos = parseFloat((row.acos * 100).toFixed(2));
     }
 
-    // If ACOS is still 0 but we have spend & sales, compute it
     if (row.acos === 0 && row.sales > 0 && row.spend > 0) {
       row.acos = parseFloat(((row.spend / row.sales) * 100).toFixed(2));
     }
 
-    // CVR: use purchaseRate if available (campaign-level report), else compute
     if (row.purchaseRate && cleanCurrency(row.purchaseRate) > 0) {
       const pr = cleanCurrency(row.purchaseRate);
-      // Purchase rate could be decimal (0.5 = 50%) or already percentage
       row.cvr = pr < 2 ? parseFloat((pr * 100).toFixed(2)) : parseFloat(pr.toFixed(2));
     } else {
       row.cvr = row.clicks > 0
@@ -349,14 +380,12 @@ function isExcelFile(file) {
  * Main parse function — handles CSV text, CSV files, and XLSX files.
  */
 export async function parseCSV(input) {
-  // XLSX file
   if (input instanceof File && isExcelFile(input)) {
     console.log('Detected Excel file, loading XLSX parser...');
     const { headers, rows } = await parseXLSXFile(input);
     return processRows(headers, rows);
   }
 
-  // CSV file or text
   return new Promise((resolve, reject) => {
     const doParse = (csvText) => {
       const { text: cleanedText, skippedRows } = findHeaderRow(csvText);
@@ -412,13 +441,118 @@ export function exportToCSV(rows, columns) {
   return csv;
 }
 
-export function exportNegativesForAmazon(rows) {
+/**
+ * Export negatives as XLSX matching EXACT Amazon Sponsored Products Bulk Upload format.
+ *
+ * Amazon bulk file columns (from actual SP Search Term Report / Campaigns sheet):
+ *   Product | Campaign ID | Ad Group ID | Keyword Id | Product Targeting ID |
+ *   Campaign Name (Informational only) | Ad Group Name (Informational only) |
+ *   Portfolio Name | State | Campaign Bid | Bid | Keyword Text | Match Type |
+ *   Product Targeting Expression | ... | Customer Search Term | Impressions |
+ *   Clicks | Click-through Rate | Spend | Sales | Orders | Units | Conversions
+ *
+ * For NEGATIVE KEYWORD creation, the Sponsored Products Campaigns sheet format:
+ *   Product | Entity | Operation | Campaign Id | Ad Group Id | Portfolio Id |
+ *   Campaign Name (Informational only) | Ad Group Name (Informational only) |
+ *   Start Date | End Date | Targeting Type | State | Daily Budget | SKU | ASIN |
+ *   Ad Group Default Bid | Bid | Keyword or Product Targeting Expression | Match Type
+ */
+export async function exportNegativesAsXLSX(rows, level = 'campaign', matchType = 'negativeExact') {
+  const XLSX = await loadXLSX();
+
+  const entity = level === 'campaign'
+    ? 'Campaign Negative Keyword'
+    : 'Negative Keyword';
+
+  // Build header row matching Amazon's exact format
+  const headers = [
+    'Product',
+    'Entity',
+    'Operation',
+    'Campaign Id',
+    'Ad Group Id',
+    'Portfolio Id',
+    'Campaign Name (Informational only)',
+    'Ad Group Name (Informational only)',
+    'Start Date',
+    'End Date',
+    'Targeting Type',
+    'State',
+    'Daily Budget',
+    'SKU',
+    'ASIN',
+    'Ad Group Default Bid',
+    'Bid',
+    'Keyword or Product Targeting Expression',
+    'Match Type',
+  ];
+
+  // Build data rows
+  const dataRows = rows.map(row => [
+    'Sponsored Products',                                    // Product
+    entity,                                                   // Entity
+    'create',                                                 // Operation
+    row.campaignId || '',                                     // Campaign Id
+    level === 'adgroup' ? (row.adGroupId || '') : '',        // Ad Group Id
+    '',                                                       // Portfolio Id
+    row.campaign || '',                                       // Campaign Name
+    level === 'adgroup' ? (row.adGroup || '') : '',          // Ad Group Name
+    '',                                                       // Start Date
+    '',                                                       // End Date
+    '',                                                       // Targeting Type
+    'enabled',                                                // State
+    '',                                                       // Daily Budget
+    '',                                                       // SKU
+    '',                                                       // ASIN
+    '',                                                       // Ad Group Default Bid
+    '',                                                       // Bid
+    row.searchTerm,                                           // Keyword or Product Targeting Expression
+    matchType,                                                // Match Type
+  ]);
+
+  // Create workbook with proper sheet name
+  const wb = XLSX.utils.book_new();
+  const wsData = [headers, ...dataRows];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Set column widths
+  ws['!cols'] = headers.map(h => ({ wch: Math.max(h.length + 2, 15) }));
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Sponsored Products Campaigns');
+
+  // Generate binary
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  return new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+/**
+ * Fallback: Export negatives as CSV (same format, just CSV instead of XLSX)
+ */
+export function exportNegativesForAmazon(rows, level = 'campaign', matchType = 'negativeExact') {
+  const entity = level === 'campaign'
+    ? 'Campaign Negative Keyword'
+    : 'Negative Keyword';
+
   const amazonRows = rows.map(row => ({
-    'Campaign': row.campaign || 'YOUR_CAMPAIGN',
-    'Ad Group': row.adGroup || 'YOUR_AD_GROUP',
-    'Keyword': row.searchTerm,
-    'Match Type': 'Negative exact',
+    'Product': 'Sponsored Products',
+    'Entity': entity,
     'Operation': 'create',
+    'Campaign Id': row.campaignId || '',
+    'Ad Group Id': level === 'adgroup' ? (row.adGroupId || '') : '',
+    'Portfolio Id': '',
+    'Campaign Name (Informational only)': row.campaign || '',
+    'Ad Group Name (Informational only)': level === 'adgroup' ? (row.adGroup || '') : '',
+    'Start Date': '',
+    'End Date': '',
+    'Targeting Type': '',
+    'State': 'enabled',
+    'Daily Budget': '',
+    'SKU': '',
+    'ASIN': '',
+    'Ad Group Default Bid': '',
+    'Bid': '',
+    'Keyword or Product Targeting Expression': row.searchTerm,
+    'Match Type': matchType,
   }));
   return Papa.unparse(amazonRows);
 }
