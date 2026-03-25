@@ -73,62 +73,28 @@ function NegativeExportPanel({ rows }) {
       {showPanel && (
         <div className="mt-3 p-4 bg-dm-black border border-dm-dark-gray space-y-3">
           <div className="text-xs text-dm-gray uppercase tracking-wider font-bold mb-2">Export Settings</div>
-
-          {/* Negative Level */}
           <div className="flex items-center gap-4">
             <span className="text-xs text-dm-gray w-28">Negative Level:</span>
             <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="level"
-                value="campaign"
-                checked={level === 'campaign'}
-                onChange={() => setLevel('campaign')}
-                className="accent-dm-crimson"
-              />
+              <input type="radio" name="level" value="campaign" checked={level === 'campaign'} onChange={() => setLevel('campaign')} className="accent-dm-crimson" />
               <span className="text-sm text-white">Campaign Level</span>
             </label>
             <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="level"
-                value="adgroup"
-                checked={level === 'adgroup'}
-                onChange={() => setLevel('adgroup')}
-                className="accent-dm-crimson"
-              />
+              <input type="radio" name="level" value="adgroup" checked={level === 'adgroup'} onChange={() => setLevel('adgroup')} className="accent-dm-crimson" />
               <span className="text-sm text-white">Ad Group Level</span>
             </label>
           </div>
-
-          {/* Match Type */}
           <div className="flex items-center gap-4">
             <span className="text-xs text-dm-gray w-28">Match Type:</span>
             <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="matchType"
-                value="negativeExact"
-                checked={matchType === 'negativeExact'}
-                onChange={() => setMatchType('negativeExact')}
-                className="accent-dm-crimson"
-              />
+              <input type="radio" name="matchType" value="negativeExact" checked={matchType === 'negativeExact'} onChange={() => setMatchType('negativeExact')} className="accent-dm-crimson" />
               <span className="text-sm text-white">Negative Exact</span>
             </label>
             <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="matchType"
-                value="negativePhrase"
-                checked={matchType === 'negativePhrase'}
-                onChange={() => setMatchType('negativePhrase')}
-                className="accent-dm-crimson"
-              />
+              <input type="radio" name="matchType" value="negativePhrase" checked={matchType === 'negativePhrase'} onChange={() => setMatchType('negativePhrase')} className="accent-dm-crimson" />
               <span className="text-sm text-white">Negative Phrase</span>
             </label>
           </div>
-
-          {/* Data detection info */}
           <div className="text-xs space-y-1 border-t border-dm-dark-gray pt-2">
             {hasCampaignId ? (
               <p className="text-green-400">Campaign IDs detected - file is ready for direct Amazon upload.</p>
@@ -137,45 +103,214 @@ function NegativeExportPanel({ rows }) {
             ) : (
               <p className="text-red-400">No Campaign data found. You will need to add Campaign Id manually before uploading.</p>
             )}
-            <p className="text-dm-gray">Format: Amazon Sponsored Products Bulk Upload (matches your bulk file exactly)</p>
+            <p className="text-dm-gray">Format: Amazon Sponsored Products Bulk Upload</p>
           </div>
-
-          {/* Export Buttons */}
           <div className="flex gap-3">
-            <button
-              onClick={handleExportXLSX}
-              disabled={exporting}
-              className="flex-1 px-4 py-2 bg-dm-crimson text-white text-sm font-bold uppercase tracking-wider hover:bg-red-700 transition-colors disabled:opacity-50"
-            >
+            <button onClick={handleExportXLSX} disabled={exporting} className="flex-1 px-4 py-2 bg-dm-crimson text-white text-sm font-bold uppercase tracking-wider hover:bg-red-700 transition-colors disabled:opacity-50">
               {exporting ? 'Generating...' : `Download XLSX (${rows.length} negatives)`}
             </button>
-            <button
-              onClick={handleExportCSV}
-              className="px-4 py-2 bg-dm-dark-gray text-dm-gray text-sm font-bold uppercase tracking-wider hover:bg-dm-gray/30 hover:text-white transition-colors border border-dm-dark-gray"
-            >
+            <button onClick={handleExportCSV} className="px-4 py-2 bg-dm-dark-gray text-dm-gray text-sm font-bold uppercase tracking-wider hover:bg-dm-gray/30 hover:text-white transition-colors border border-dm-dark-gray">
               CSV
             </button>
           </div>
-          <p className="text-xs text-dm-gray/50">XLSX recommended - matches Amazon bulk upload format exactly</p>
         </div>
       )}
     </div>
   );
 }
 
-function SortableTable({ rows, bucket }) {
-  const [sortKey, setSortKey] = useState('spend');
-  const [sortDir, setSortDir] = useState('desc');
-  const [searchFilter, setSearchFilter] = useState('');
+/* ─── Advanced Filter Bar ─── */
+function FilterBar({ filters, setFilters, rows }) {
+  const maxSpend = useMemo(() => Math.max(...rows.map(r => r.spend || 0), 0), [rows]);
+  const maxClicks = useMemo(() => Math.max(...rows.map(r => r.clicks || 0), 0), [rows]);
 
-  const filtered = useMemo(() => {
-    if (!searchFilter.trim()) return rows;
-    const q = searchFilter.toLowerCase();
-    return rows.filter(r =>
+  return (
+    <div className="bg-dm-black border border-dm-dark-gray p-3 mb-4 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-dm-gray uppercase tracking-wider font-bold">Filters</span>
+        <button
+          onClick={() => setFilters({ search: '', ordersFilter: 'all', spendMin: '', spendMax: '', clicksMin: '', acosMin: '', acosMax: '', matchMin: '', matchMax: '' })}
+          className="text-xs text-dm-crimson hover:text-red-400 cursor-pointer"
+        >
+          Reset All
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-3 items-end">
+        {/* Search */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-dm-gray uppercase">Search Term</label>
+          <input
+            type="text"
+            placeholder="Search..."
+            value={filters.search}
+            onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
+            className="bg-dm-charcoal border border-dm-dark-gray px-2 py-1.5 text-xs text-white placeholder-dm-gray/50 focus:border-dm-crimson focus:outline-none w-40 font-mono"
+          />
+        </div>
+
+        {/* Orders Filter */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-dm-gray uppercase">Orders</label>
+          <select
+            value={filters.ordersFilter}
+            onChange={e => setFilters(f => ({ ...f, ordersFilter: e.target.value }))}
+            className="bg-dm-charcoal border border-dm-dark-gray px-2 py-1.5 text-xs text-white focus:border-dm-crimson focus:outline-none cursor-pointer"
+          >
+            <option value="all">All</option>
+            <option value="zero">0 Orders Only</option>
+            <option value="has">Has Orders (&gt;0)</option>
+            <option value="1plus">1+ Orders</option>
+            <option value="5plus">5+ Orders</option>
+          </select>
+        </div>
+
+        {/* Spend Range */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-dm-gray uppercase">Spend Min ($)</label>
+          <input
+            type="number"
+            placeholder="0"
+            value={filters.spendMin}
+            onChange={e => setFilters(f => ({ ...f, spendMin: e.target.value }))}
+            className="bg-dm-charcoal border border-dm-dark-gray px-2 py-1.5 text-xs text-white placeholder-dm-gray/50 focus:border-dm-crimson focus:outline-none w-20 font-mono"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-dm-gray uppercase">Spend Max ($)</label>
+          <input
+            type="number"
+            placeholder="any"
+            value={filters.spendMax}
+            onChange={e => setFilters(f => ({ ...f, spendMax: e.target.value }))}
+            className="bg-dm-charcoal border border-dm-dark-gray px-2 py-1.5 text-xs text-white placeholder-dm-gray/50 focus:border-dm-crimson focus:outline-none w-20 font-mono"
+          />
+        </div>
+
+        {/* Clicks Min */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-dm-gray uppercase">Clicks Min</label>
+          <input
+            type="number"
+            placeholder="0"
+            value={filters.clicksMin}
+            onChange={e => setFilters(f => ({ ...f, clicksMin: e.target.value }))}
+            className="bg-dm-charcoal border border-dm-dark-gray px-2 py-1.5 text-xs text-white placeholder-dm-gray/50 focus:border-dm-crimson focus:outline-none w-20 font-mono"
+          />
+        </div>
+
+        {/* ACOS Range */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-dm-gray uppercase">ACOS Min %</label>
+          <input
+            type="number"
+            placeholder="0"
+            value={filters.acosMin}
+            onChange={e => setFilters(f => ({ ...f, acosMin: e.target.value }))}
+            className="bg-dm-charcoal border border-dm-dark-gray px-2 py-1.5 text-xs text-white placeholder-dm-gray/50 focus:border-dm-crimson focus:outline-none w-20 font-mono"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-dm-gray uppercase">ACOS Max %</label>
+          <input
+            type="number"
+            placeholder="any"
+            value={filters.acosMax}
+            onChange={e => setFilters(f => ({ ...f, acosMax: e.target.value }))}
+            className="bg-dm-charcoal border border-dm-dark-gray px-2 py-1.5 text-xs text-white placeholder-dm-gray/50 focus:border-dm-crimson focus:outline-none w-20 font-mono"
+          />
+        </div>
+
+        {/* Match % Range */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-dm-gray uppercase">Match Min %</label>
+          <input
+            type="number"
+            placeholder="0"
+            value={filters.matchMin}
+            onChange={e => setFilters(f => ({ ...f, matchMin: e.target.value }))}
+            className="bg-dm-charcoal border border-dm-dark-gray px-2 py-1.5 text-xs text-white placeholder-dm-gray/50 focus:border-dm-crimson focus:outline-none w-20 font-mono"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-dm-gray uppercase">Match Max %</label>
+          <input
+            type="number"
+            placeholder="any"
+            value={filters.matchMax}
+            onChange={e => setFilters(f => ({ ...f, matchMax: e.target.value }))}
+            className="bg-dm-charcoal border border-dm-dark-gray px-2 py-1.5 text-xs text-white placeholder-dm-gray/50 focus:border-dm-crimson focus:outline-none w-20 font-mono"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function applyFilters(rows, filters) {
+  let result = rows;
+
+  // Text search
+  if (filters.search.trim()) {
+    const q = filters.search.toLowerCase();
+    result = result.filter(r =>
       r.searchTerm.toLowerCase().includes(q) ||
       (r.reason && r.reason.toLowerCase().includes(q))
     );
-  }, [rows, searchFilter]);
+  }
+
+  // Orders filter
+  if (filters.ordersFilter === 'zero') {
+    result = result.filter(r => r.orders === 0);
+  } else if (filters.ordersFilter === 'has') {
+    result = result.filter(r => r.orders > 0);
+  } else if (filters.ordersFilter === '1plus') {
+    result = result.filter(r => r.orders >= 1);
+  } else if (filters.ordersFilter === '5plus') {
+    result = result.filter(r => r.orders >= 5);
+  }
+
+  // Spend range
+  if (filters.spendMin !== '') {
+    result = result.filter(r => (r.spend || 0) >= parseFloat(filters.spendMin));
+  }
+  if (filters.spendMax !== '') {
+    result = result.filter(r => (r.spend || 0) <= parseFloat(filters.spendMax));
+  }
+
+  // Clicks min
+  if (filters.clicksMin !== '') {
+    result = result.filter(r => (r.clicks || 0) >= parseInt(filters.clicksMin));
+  }
+
+  // ACOS range
+  if (filters.acosMin !== '') {
+    result = result.filter(r => (r.acos || 0) >= parseFloat(filters.acosMin));
+  }
+  if (filters.acosMax !== '') {
+    result = result.filter(r => (r.acos || 0) <= parseFloat(filters.acosMax));
+  }
+
+  // Match % range
+  if (filters.matchMin !== '') {
+    result = result.filter(r => (r.matchPct || 0) >= parseFloat(filters.matchMin));
+  }
+  if (filters.matchMax !== '') {
+    result = result.filter(r => (r.matchPct || 0) <= parseFloat(filters.matchMax));
+  }
+
+  return result;
+}
+
+const DEFAULT_FILTERS = { search: '', ordersFilter: 'all', spendMin: '', spendMax: '', clicksMin: '', acosMin: '', acosMax: '', matchMin: '', matchMax: '' };
+
+function SortableTable({ rows, bucket }) {
+  const [sortKey, setSortKey] = useState('spend');
+  const [sortDir, setSortDir] = useState('desc');
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [showFilters, setShowFilters] = useState(false);
+
+  const filtered = useMemo(() => applyFilters(rows, filters), [rows, filters]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -199,16 +334,20 @@ function SortableTable({ rows, bucket }) {
   };
 
   const handleDownloadCSV = () => {
-    const csv = exportToCSV(rows, TABLE_COLUMNS);
+    const csv = exportToCSV(filtered, TABLE_COLUMNS);
     downloadFile(csv, `dmoose-${bucket}-terms.csv`);
   };
 
-  // Color the match % based on new thresholds
   const getMatchColor = (pct) => {
     if (pct > 80) return 'text-green-400';
     if (pct >= 51) return 'text-orange-400';
     return 'text-red-400';
   };
+
+  const activeFilterCount = Object.entries(filters).filter(([k, v]) => {
+    if (k === 'ordersFilter') return v !== 'all';
+    return v !== '';
+  }).length;
 
   return (
     <div>
@@ -220,17 +359,48 @@ function SortableTable({ rows, bucket }) {
           Download CSV
         </button>
         {bucket === 'irrelevant' && (
-          <NegativeExportPanel rows={rows} />
+          <NegativeExportPanel rows={filtered} />
         )}
-        <div className="ml-auto">
-          <input
-            type="text"
-            placeholder="Filter terms..."
-            value={searchFilter}
-            onChange={e => setSearchFilter(e.target.value)}
-            className="bg-dm-black border border-dm-dark-gray px-3 py-2 text-sm text-white placeholder-dm-gray/50 focus:border-dm-crimson focus:outline-none w-56 font-mono"
-          />
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className={`px-4 py-2 text-sm font-bold uppercase tracking-wider transition-colors border ${
+            showFilters || activeFilterCount > 0
+              ? 'bg-dm-crimson/20 border-dm-crimson text-dm-crimson'
+              : 'bg-dm-dark-gray border-dm-dark-gray text-dm-gray hover:text-white'
+          }`}
+        >
+          Filters {activeFilterCount > 0 && `(${activeFilterCount})`}
+        </button>
+        <div className="ml-auto text-xs text-dm-gray font-mono">
+          {filtered.length !== rows.length
+            ? `${filtered.length} of ${rows.length} shown`
+            : `${rows.length} terms`}
         </div>
+      </div>
+
+      {showFilters && <FilterBar filters={filters} setFilters={setFilters} rows={rows} />}
+
+      {/* Quick filter chips */}
+      <div className="flex flex-wrap gap-2 mb-3">
+        {[
+          { label: '0 Orders', fn: () => setFilters(f => ({ ...f, ordersFilter: f.ordersFilter === 'zero' ? 'all' : 'zero' })), active: filters.ordersFilter === 'zero' },
+          { label: 'Has Orders', fn: () => setFilters(f => ({ ...f, ordersFilter: f.ordersFilter === 'has' ? 'all' : 'has' })), active: filters.ordersFilter === 'has' },
+          { label: 'Spend > $5', fn: () => setFilters(f => ({ ...f, spendMin: f.spendMin === '5' ? '' : '5' })), active: filters.spendMin === '5' },
+          { label: 'Spend > $10', fn: () => setFilters(f => ({ ...f, spendMin: f.spendMin === '10' ? '' : '10' })), active: filters.spendMin === '10' },
+          { label: 'High ACOS (>50%)', fn: () => setFilters(f => ({ ...f, acosMin: f.acosMin === '50' ? '' : '50' })), active: filters.acosMin === '50' },
+        ].map((chip, i) => (
+          <button
+            key={i}
+            onClick={chip.fn}
+            className={`px-3 py-1 text-[11px] font-bold uppercase tracking-wider transition-colors border ${
+              chip.active
+                ? 'bg-dm-crimson/20 border-dm-crimson text-white'
+                : 'bg-dm-black border-dm-dark-gray text-dm-gray hover:text-white hover:border-dm-gray'
+            }`}
+          >
+            {chip.label}
+          </button>
+        ))}
       </div>
 
       <div className="overflow-x-auto border border-dm-dark-gray">
@@ -276,17 +446,29 @@ function SortableTable({ rows, bucket }) {
             {sorted.length === 0 && (
               <tr>
                 <td colSpan={TABLE_COLUMNS.length} className="px-3 py-8 text-center text-dm-gray">
-                  No terms in this bucket
+                  No terms match your filters
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      <div className="text-xs text-dm-gray mt-2 font-mono">
-        {filtered.length !== rows.length
-          ? `${filtered.length} of ${rows.length} terms (filtered)`
-          : `${rows.length} terms`}
+    </div>
+  );
+}
+
+/* ─── DMoose Logo SVG ─── */
+function DmooseLogo() {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-10 h-10 bg-dm-crimson flex items-center justify-center">
+        <span className="text-white font-black text-lg font-mono">D</span>
+      </div>
+      <div>
+        <h1 className="text-2xl font-bold font-mono leading-none">
+          <span className="text-dm-crimson">DMoose</span> <span className="text-white">Search Classifier</span>
+        </h1>
+        <p className="text-[10px] text-dm-gray uppercase tracking-widest mt-0.5">Results Dashboard</p>
       </div>
     </div>
   );
@@ -303,7 +485,6 @@ export default function ResultsScreen({ results, onReset }) {
   const totalSpend = results.reduce((s, r) => s + (r.spend || 0), 0);
   const relevantSpend = relevant.reduce((s, r) => s + (r.spend || 0), 0);
   const wastingSpend = wasting.reduce((s, r) => s + (r.spend || 0), 0);
-  const semiSpend = semi.reduce((s, r) => s + (r.spend || 0), 0);
   const irrelevantSpend = irrelevant.reduce((s, r) => s + (r.spend || 0), 0);
   const wastedSpend = wastingSpend + irrelevantSpend;
 
@@ -318,16 +499,9 @@ export default function ResultsScreen({ results, onReset }) {
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
-      {/* Header */}
+      {/* Header with DMoose Logo */}
       <div className="flex items-center justify-between border-b border-dm-dark-gray pb-4">
-        <div>
-          <h1 className="text-2xl font-bold font-mono">
-            <span className="text-dm-crimson">Results</span> Dashboard
-          </h1>
-          <p className="text-xs text-dm-gray mt-1">
-            Thresholds: &gt;80% = Relevant | 51-80% = Semi-Relevant | ≤50% = Irrelevant | 4 buckets
-          </p>
-        </div>
+        <DmooseLogo />
         <button
           onClick={onReset}
           className="px-4 py-2 border border-dm-dark-gray text-dm-gray text-sm uppercase tracking-wider hover:border-dm-crimson hover:text-white transition-colors"
@@ -376,10 +550,10 @@ export default function ResultsScreen({ results, onReset }) {
 
       {/* Tab Description */}
       <div className="text-xs text-dm-gray/60 px-1">
-        {activeTab === 'relevant' && '✅ Search terms with >80% keyword match AND at least 1 order with acceptable ACOS — your best performers'}
-        {activeTab === 'wasting' && '⚠️ Search terms with >80% match BUT zero orders or ACOS above threshold — optimize bids or pause'}
-        {activeTab === 'semi' && '◆ Search terms with 51-80% keyword match — partially related, review manually before negating'}
-        {activeTab === 'irrelevant' && '❌ Search terms with ≤50% keyword match OR zero orders + very high ACOS — safe to add as negative keywords'}
+        {activeTab === 'relevant' && '✅ High relevancy terms with orders and healthy ACOS — your best performers'}
+        {activeTab === 'wasting' && '⚠️ Highly relevant but zero orders or ACOS above threshold — optimize bids or pause'}
+        {activeTab === 'semi' && '◆ Partially related terms (51-80% match) — review manually before negating'}
+        {activeTab === 'irrelevant' && '❌ Low relevancy or zero orders with high ACOS — safe to add as negative keywords'}
       </div>
 
       {/* Table */}

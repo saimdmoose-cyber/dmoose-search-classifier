@@ -57,14 +57,21 @@ export default function SetupScreen({ onAnalyze }) {
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
-      {/* Header */}
+      {/* Header with DMoose Logo */}
       <div className="border-b border-dm-dark-gray pb-6">
-        <h1 className="text-3xl font-bold font-mono tracking-tight">
-          <span className="text-dm-crimson">DMoose</span> Search Term Classifier
-        </h1>
-        <p className="text-dm-gray mt-2 text-sm">
-          Upload your Amazon SP Search Term Report, paste your product info, and classify every term.
-        </p>
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-dm-crimson flex items-center justify-center flex-shrink-0">
+            <span className="text-white font-black text-2xl font-mono">D</span>
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold font-mono tracking-tight">
+              <span className="text-dm-crimson">DMoose</span> Search Term Classifier
+            </h1>
+            <p className="text-dm-gray mt-1 text-sm">
+              Upload your Amazon SP Search Term Report, paste your product info, and classify every term.
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* CSV Upload */}
